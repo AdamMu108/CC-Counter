@@ -3,15 +3,8 @@
 Card Detector using Image Processing (OpenCV)
 """
 
-try:
-    import cv2
-    import numpy as np
-    CV2_AVAILABLE = True
-except ImportError:
-    CV2_AVAILABLE = False
-    cv2 = None
-    np = None
-
+import cv2
+import numpy as np
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
