@@ -17,8 +17,14 @@ source.dir = .
 # الإصدار
 version = 1.0.0
 
-# المتطلبات
-requirements = python3,kivy,opencv,numpy,pillow
+# المتطلبات - مهم جداً
+requirements = python3,kivy==2.2.1,pillow,arabic-reshaper,python-bidi
+
+# الملفات المضمنة
+source.include_exts = py,png,jpg,kv,atlas,ttf,txt
+
+# مجلدات مضمنة
+source.include_patterns = fonts/*
 
 # الأيقونة
 #icon.filename = %(source.dir)s/data/icon.png

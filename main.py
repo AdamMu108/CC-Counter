@@ -9,16 +9,15 @@ from kivy.uix.screenmanager import ScreenManager, SlideTransition
 from kivy.core.window import Window
 from kivy.core.text import LabelBase
 from kivy.utils import platform
-from kivy.config import Config
 import os
 
-# تعطيل multitouch للكمبيوتر
-Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
-
 # تسجيل الخط العربي
-FONT_PATH = os.path.join(os.path.dirname(__file__), 'fonts', 'NotoSansArabic.ttf')
-if os.path.exists(FONT_PATH):
-    LabelBase.register(name='Arabic', fn_regular=FONT_PATH)
+try:
+    FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts', 'NotoSansArabic.ttf')
+    if os.path.exists(FONT_PATH):
+        LabelBase.register(name='Arabic', fn_regular=FONT_PATH)
+except Exception as e:
+    print(f"Font error: {e}")
 
 # استيراد الشاشات
 from modern_ui import (
