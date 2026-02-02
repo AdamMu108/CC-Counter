@@ -1,0 +1,14 @@
+# CC Counter - Complex Complex Card Game Score Calculator
+# Dependencies for mobile app with camera and image processing
+
+kivy==2.2.1
+kivymd==1.1.1
+opencv-python==4.8.1.78
+numpy==1.24.3
+pillow==10.0.1
+
+# For building Android APK (optional)
+# buildozer==1.5.0
+
+# For iOS (optional)
+# kivy-ios

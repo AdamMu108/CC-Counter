@@ -1,0 +1,27 @@
+========================================
+  كيفية بناء APK باستخدام Google Colab
+========================================
+
+1. افتح Google Colab: https://colab.research.google.com
+
+2. ارفع ملفات المشروع أو استنسخ من GitHub:
+   !git clone https://github.com/AdamMu108/CC-Counter.git
+   %cd CC-Counter
+
+3. ثبت المتطلبات:
+   !pip install buildozer cython
+
+4. ثبت أدوات النظام:
+   !apt-get update
+   !apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+
+5. ابنِ التطبيق:
+   !buildozer android debug
+
+6. حمّل ملف APK من مجلد bin/
+
+========================================
+  أو استخدم GitHub Actions
+========================================
+
+أضف ملف .github/workflows/build.yml للبناء التلقائي
