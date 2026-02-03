@@ -81,7 +81,15 @@
         <!-- شاشة العد -->
         <div id="counting-screen" class="screen">
             <div class="screen-content">
-                <h2>أدخل نتيجة فريقك</h2>
+                <div class="team-selector">
+                    <button class="team-select-btn active" id="select-team1" onclick="selectTeam(1)">
+                        <span id="select-team1-name">فريقنا</span>
+                    </button>
+                    <button class="team-select-btn" id="select-team2" onclick="selectTeam(2)">
+                        <span id="select-team2-name">الخصم</span>
+                    </button>
+                </div>
+                <h2 id="counting-title">أدخل نتيجة <span id="selected-team-name">فريقنا</span></h2>
                 
                 <div class="counter-section">
                     <label>عدد الأكلات</label>

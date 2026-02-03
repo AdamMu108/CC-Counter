@@ -98,6 +98,7 @@ function confirmNewGame() {
 // ========== شاشة العد ==========
 function resetCurrentRound() {
     return {
+        selectedTeam: 1, // 1 = الفريق الأول، 2 = الفريق الثاني
         tricks: 0,
         diamonds: 0,
         queens: [],
@@ -118,6 +119,29 @@ function updateCountingScreen() {
     
     gameState.currentRound.queens = [];
     gameState.currentRound.hasKing = false;
+    
+    // تحديث أسماء الفرق في الاختيار
+    document.getElementById('select-team1-name').textContent = gameState.team1Name;
+    document.getElementById('select-team2-name').textContent = gameState.team2Name;
+    
+    // تحديد الفريق الأول افتراضياً
+    selectTeam(1);
+}
+
+function selectTeam(teamNum) {
+    gameState.currentRound.selectedTeam = teamNum;
+    
+    // تحديث الأزرار
+    document.getElementById('select-team1').classList.toggle('active', teamNum === 1);
+    document.getElementById('select-team2').classList.toggle('active', teamNum === 2);
+    
+    // تحديث العنوان
+    const teamName = teamNum === 1 ? gameState.team1Name : gameState.team2Name;
+    document.getElementById('selected-team-name').textContent = teamName;
+    
+    if ('vibrate' in navigator) {
+        navigator.vibrate(15);
+    }
 }
 
 function changeValue(type, delta) {
@@ -249,39 +273,49 @@ function toggleDoublingCard(btn) {
 // ========== حساب النتيجة ==========
 function calculateAndFinish() {
     const round = gameState.currentRound;
-    let team1Score = 0;
+    let selectedTeamScore = 0;
     
     // حساب الأكلات
-    team1Score -= round.tricks * POINTS.trick;
+    selectedTeamScore -= round.tricks * POINTS.trick;
     
     // حساب الديناري
-    team1Score -= round.diamonds * POINTS.diamond;
+    selectedTeamScore -= round.diamonds * POINTS.diamond;
     
     // حساب البنات
     round.queens.forEach(suit => {
         const doubled = round.opponentDoubled[suit];
-        team1Score -= POINTS.queen * (doubled ? 2 : 1);
+        selectedTeamScore -= POINTS.queen * (doubled ? 2 : 1);
     });
     
     // حساب شيخ القبة
     if (round.hasKing) {
         const doubled = round.opponentDoubled['king'];
-        team1Score -= POINTS.kingHeart * (doubled ? 2 : 1);
+        selectedTeamScore -= POINTS.kingHeart * (doubled ? 2 : 1);
     }
     
     // حساب التدبيل على الخصم
     Object.entries(round.myDoubled).forEach(([card, isDoubled]) => {
         if (isDoubled) {
             if (card === 'king') {
-                team1Score += POINTS.kingHeart; // استرداد المضاعفة
+                selectedTeamScore += POINTS.kingHeart; // استرداد المضاعفة
             } else {
-                team1Score += POINTS.queen;
+                selectedTeamScore += POINTS.queen;
             }
         }
     });
     
-    // حساب نقاط الفريق الثاني
-    const team2Score = POINTS.roundTotal - team1Score;
+    // حساب نقاط الفريق الآخر
+    const otherTeamScore = POINTS.roundTotal - selectedTeamScore;
+    
+    // تحديد نقاط كل فريق حسب الاختيار
+    let team1Score, team2Score;
+    if (round.selectedTeam === 1) {
+        team1Score = selectedTeamScore;
+        team2Score = otherTeamScore;
+    } else {
+        team1Score = otherTeamScore;
+        team2Score = selectedTeamScore;
+    }
     
     // تحديث المجاميع
     gameState.team1Total += team1Score;
