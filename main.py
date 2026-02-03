@@ -98,12 +98,8 @@ class CCCounterApp(App):
             if os.path.exists(config_path):
                 with open(config_path, 'r') as f:
                     self.api_key = f.read().strip()
-                    if self.api_key:
-                        # تحديث card_detector
-                        import card_detector
-                        card_detector.ROBOFLOW_API_KEY = self.api_key
         except Exception as e:
-            print(f"Error loading API key: {e}")
+            pass  # تجاهل الأخطاء
     
     def on_start(self):
         print("=" * 50)
