@@ -2,8 +2,8 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:  # يخليك تشغله يدوي
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -11,34 +11,41 @@ jobs:
     timeout-minutes: 120
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          git zip unzip openjdk-17-jdk autoconf libtool \
-          pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev \
-          cmake libffi-dev libssl-dev
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip openjdk-17-jdk autoconf libtool \
+            pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev \
+            cmake libffi-dev libssl-dev build-essential \
+            libltdl-dev libffi-dev
 
-    - name: Install buildozer
-      run: |
-        pip install --upgrade pip
-        pip install buildozer cython
+      - name: Install buildozer and dependencies
+        run: |
+          pip install --upgrade pip wheel setuptools
+          pip install buildozer cython==0.29.36
 
-    - name: Build APK
-      run: |
-        buildozer android debug
+      - name: Setup buildozer
+        run: |
+          buildozer android debug 2>&1 | head -100 || true
+          # First run downloads SDK/NDK
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: CC-Counter-APK
-        path: bin/*.apk
-        retention-days: 30
+      - name: Build APK
+        run: |
+          yes | buildozer android debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CC-Counter-APK
+          path: bin/*.apk
+          retention-days: 30
+          if-no-files-found: warn
