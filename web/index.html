@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>عداد الكومبلكس شراكة</title>
+    <link rel="manifest" href="manifest.json">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- شاشة الترحيب -->
+        <div id="welcome-screen" class="screen active">
+            <div class="screen-content">
+                <div class="cards-display">
+                    <span class="card-symbol spade">♠</span>
+                    <span class="card-symbol heart">♥</span>
+                    <span class="card-symbol diamond">♦</span>
+                    <span class="card-symbol club">♣</span>
+                </div>
+                <h1 class="title">عداد الكومبلكس شراكة</h1>
+                
+                <div class="input-group">
+                    <label>اسم الفريق الأول</label>
+                    <input type="text" id="team1-name" placeholder="فريقنا">
+                </div>
+                
+                <div class="input-group">
+                    <label>اسم الفريق الثاني</label>
+                    <input type="text" id="team2-name" placeholder="الخصم">
+                </div>
+                
+                <button class="btn btn-success" onclick="startNewGame()">بدء لعبة جديدة</button>
+                <button class="btn btn-primary" onclick="continueGame()">استكمال لعبة سابقة</button>
+            </div>
+        </div>
+
+        <!-- شاشة اللعبة الرئيسية -->
+        <div id="game-screen" class="screen">
+            <div class="screen-content">
+                <div class="score-header">
+                    <div class="team-score">
+                        <span class="team-name" id="game-team1-name">فريقنا</span>
+                        <span class="score" id="team1-score">0</span>
+                    </div>
+                    <div class="vs">VS</div>
+                    <div class="team-score">
+                        <span class="team-name" id="game-team2-name">الخصم</span>
+                        <span class="score" id="team2-score">0</span>
+                    </div>
+                </div>
+                
+                <div class="round-info">
+                    <span>الجولة: <strong id="round-number">0</strong></span>
+                </div>
+                
+                <div class="game-buttons">
+                    <button class="btn btn-success btn-large" onclick="startRound()">
+                        🎴 بدء جولة جديدة
+                    </button>
+                    <button class="btn btn-secondary" onclick="showHistory()">
+                        📋 سجل الجولات
+                    </button>
+                    <button class="btn btn-danger" onclick="confirmNewGame()">
+                        🔄 لعبة جديدة
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- شاشة العد -->
+        <div id="counting-screen" class="screen">
+            <div class="screen-content">
+                <h2>أدخل نتيجة فريقك</h2>
+                
+                <div class="counter-section">
+                    <label>عدد الأكلات</label>
+                    <div class="counter">
+                        <button class="counter-btn" onclick="changeValue('tricks', -1)">−</button>
+                        <span id="tricks-value">0</span>
+                        <button class="counter-btn" onclick="changeValue('tricks', 1)">+</button>
+                    </div>
+                </div>
+                
+                <div class="counter-section">
+                    <label>عدد الديناري ♦</label>
+                    <div class="counter">
+                        <button class="counter-btn" onclick="changeValue('diamonds', -1)">−</button>
+                        <span id="diamonds-value">0</span>
+                        <button class="counter-btn" onclick="changeValue('diamonds', 1)">+</button>
+                    </div>
+                </div>
+                
+                <div class="cards-selection">
+                    <label>البنات</label>
+                    <div class="card-buttons">
+                        <button class="card-btn" data-card="queen-spade" onclick="toggleCard(this)">
+                            <span class="card-rank">Q</span>
+                            <span class="suit spade">♠</span>
+                        </button>
+                        <button class="card-btn" data-card="queen-heart" onclick="toggleCard(this)">
+                            <span class="card-rank">Q</span>
+                            <span class="suit heart">♥</span>
+                        </button>
+                        <button class="card-btn" data-card="queen-diamond" onclick="toggleCard(this)">
+                            <span class="card-rank">Q</span>
+                            <span class="suit diamond">♦</span>
+                        </button>
+                        <button class="card-btn" data-card="queen-club" onclick="toggleCard(this)">
+                            <span class="card-rank">Q</span>
+                            <span class="suit club">♣</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="cards-selection">
+                    <label>شيخ القبة</label>
+                    <div class="card-buttons single">
+                        <button class="card-btn king-btn" data-card="king-heart" onclick="toggleCard(this)">
+                            <span class="card-rank">K</span>
+                            <span class="suit heart">♥</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="btn-row">
+                    <button class="btn btn-success" onclick="goToDoubling()">التالي ←</button>
+                    <button class="btn btn-secondary" onclick="goToScreen('game-screen')">رجوع</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- شاشة التدبيل -->
+        <div id="doubling-screen" class="screen">
+            <div class="screen-content">
+                <h2>التدبيل</h2>
+                
+                <div class="doubling-section" id="opponent-doubled-section">
+                    <h3>بطاقات دبّلها عليك الخصم</h3>
+                    <p class="hint">اختر البطاقات التي أخذتها وكانت مدبّلة عليك</p>
+                    <div class="card-buttons" id="opponent-doubled-cards">
+                        <!-- سيتم ملؤها ديناميكياً -->
+                    </div>
+                </div>
+                
+                <div class="doubling-section" id="my-doubled-section">
+                    <h3>بطاقات دبّلتها أنت على الخصم</h3>
+                    <p class="hint">اختر البطاقات التي دبّلتها وأخذها الخصم</p>
+                    <div class="card-buttons" id="my-doubled-cards">
+                        <!-- سيتم ملؤها ديناميكياً -->
+                    </div>
+                </div>
+                
+                <div class="btn-row">
+                    <button class="btn btn-success" onclick="calculateAndFinish()">احسب النتيجة</button>
+                    <button class="btn btn-secondary" onclick="goToScreen('counting-screen')">رجوع</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- شاشة السجل -->
+        <div id="history-screen" class="screen">
+            <div class="screen-content">
+                <h2>سجل الجولات</h2>
+                
+                <div class="history-table" id="history-table">
+                    <!-- سيتم ملؤها ديناميكياً -->
+                </div>
+                
+                <div class="total-summary" id="total-summary"></div>
+                
+                <button class="btn btn-primary" onclick="goToScreen('game-screen')">رجوع</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
