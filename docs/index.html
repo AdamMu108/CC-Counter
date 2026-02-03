@@ -62,8 +62,14 @@
                     <button class="btn btn-success btn-large" onclick="startRound()">
                         🎴 بدء جولة جديدة
                     </button>
+                    <button class="btn btn-primary" onclick="startCameraRound()">
+                        📷 تصوير الأكلات
+                    </button>
                     <button class="btn btn-secondary" onclick="showHistory()">
                         📋 سجل الجولات
+                    </button>
+                    <button class="btn btn-secondary" onclick="showSettings()">
+                        ⚙️ إعدادات API
                     </button>
                     <button class="btn btn-danger" onclick="confirmNewGame()">
                         🔄 لعبة جديدة
@@ -174,6 +180,80 @@
                 <div class="total-summary" id="total-summary"></div>
                 
                 <button class="btn btn-primary" onclick="goToScreen('game-screen')">رجوع</button>
+            </div>
+        </div>
+
+        <!-- شاشة الكاميرا -->
+        <div id="camera-screen" class="screen">
+            <div class="screen-content">
+                <h2>📷 تصوير الأكلات</h2>
+                
+                <div class="camera-container">
+                    <video id="camera-preview" autoplay playsinline></video>
+                    <canvas id="camera-canvas" style="display:none;"></canvas>
+                    <img id="captured-image" style="display:none;">
+                </div>
+                
+                <div class="camera-controls">
+                    <button class="btn btn-primary btn-large" id="capture-btn" onclick="capturePhoto()">
+                        📸 التقاط صورة
+                    </button>
+                    <button class="btn btn-success" id="analyze-btn" style="display:none;" onclick="analyzeImage()">
+                        🔍 تحليل البطاقات
+                    </button>
+                    <button class="btn btn-secondary" id="retake-btn" style="display:none;" onclick="retakePhoto()">
+                        🔄 إعادة التقاط
+                    </button>
+                </div>
+                
+                <div class="detection-results" id="detection-results" style="display:none;">
+                    <h3>البطاقات المكتشفة:</h3>
+                    <div id="detected-cards-list"></div>
+                </div>
+                
+                <div class="camera-info">
+                    <p>💡 وجّه الكاميرا نحو البطاقات على الطاولة</p>
+                </div>
+                
+                <div class="btn-row">
+                    <button class="btn btn-success" id="use-results-btn" style="display:none;" onclick="useDetectionResults()">
+                        ✓ استخدم النتائج
+                    </button>
+                    <button class="btn btn-secondary" onclick="closeCameraAndReturn()">رجوع</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- شاشة الإعدادات -->
+        <div id="settings-screen" class="screen">
+            <div class="screen-content">
+                <h2>⚙️ إعدادات API</h2>
+                
+                <div class="settings-section">
+                    <p class="info-text">
+                        للتعرف على البطاقات تلقائياً، تحتاج مفتاح API من Roboflow
+                    </p>
+                    
+                    <div class="input-group">
+                        <label>مفتاح API</label>
+                        <input type="password" id="api-key-input" placeholder="أدخل مفتاح API الخاص بك">
+                    </div>
+                    
+                    <div class="api-info">
+                        <h4>كيف تحصل على المفتاح؟</h4>
+                        <ol>
+                            <li>سجّل حساب مجاني في <a href="https://roboflow.com" target="_blank">roboflow.com</a></li>
+                            <li>اذهب إلى Settings → API Keys</li>
+                            <li>انسخ المفتاح وألصقه هنا</li>
+                        </ol>
+                        <p class="note">الحساب المجاني يتيح 1000 صورة شهرياً</p>
+                    </div>
+                </div>
+                
+                <div class="btn-row">
+                    <button class="btn btn-success" onclick="saveApiKey()">💾 حفظ</button>
+                    <button class="btn btn-secondary" onclick="goToScreen('game-screen')">رجوع</button>
+                </div>
             </div>
         </div>
     </div>

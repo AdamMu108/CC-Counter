@@ -391,3 +391,300 @@ if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js').catch(() => {});
     });
 }
+
+// ========== الإعدادات و API ==========
+let apiKey = localStorage.getItem('roboflowApiKey') || '';
+let cameraStream = null;
+let detectedResults = null;
+
+function showSettings() {
+    document.getElementById('api-key-input').value = apiKey;
+    goToScreen('settings-screen');
+}
+
+function saveApiKey() {
+    const key = document.getElementById('api-key-input').value.trim();
+    apiKey = key;
+    localStorage.setItem('roboflowApiKey', key);
+    alert('تم حفظ المفتاح بنجاح ✓');
+    goToScreen('game-screen');
+}
+
+// ========== شاشة الكاميرا ==========
+async function startCameraRound() {
+    if (!apiKey) {
+        if (confirm('لم تقم بإدخال مفتاح API بعد. هل تريد إدخاله الآن؟')) {
+            showSettings();
+        }
+        return;
+    }
+    
+    gameState.roundNumber++;
+    gameState.currentRound = resetCurrentRound();
+    detectedResults = null;
+    
+    // إعادة تعيين الواجهة
+    document.getElementById('capture-btn').style.display = 'block';
+    document.getElementById('analyze-btn').style.display = 'none';
+    document.getElementById('retake-btn').style.display = 'none';
+    document.getElementById('use-results-btn').style.display = 'none';
+    document.getElementById('detection-results').style.display = 'none';
+    document.getElementById('captured-image').style.display = 'none';
+    
+    goToScreen('camera-screen');
+    await startCamera();
+}
+
+async function startCamera() {
+    const video = document.getElementById('camera-preview');
+    
+    try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: 'environment',
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        });
+        video.srcObject = cameraStream;
+        video.style.display = 'block';
+    } catch (err) {
+        alert('تعذر الوصول للكاميرا. تأكد من إعطاء الإذن للتطبيق.');
+        goToScreen('game-screen');
+    }
+}
+
+function stopCamera() {
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+    }
+}
+
+function capturePhoto() {
+    const video = document.getElementById('camera-preview');
+    const canvas = document.getElementById('camera-canvas');
+    const img = document.getElementById('captured-image');
+    
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+    
+    img.src = canvas.toDataURL('image/jpeg', 0.9);
+    img.style.display = 'block';
+    video.style.display = 'none';
+    
+    stopCamera();
+    
+    // تغيير الأزرار
+    document.getElementById('capture-btn').style.display = 'none';
+    document.getElementById('analyze-btn').style.display = 'block';
+    document.getElementById('retake-btn').style.display = 'block';
+    
+    if ('vibrate' in navigator) {
+        navigator.vibrate(50);
+    }
+}
+
+async function retakePhoto() {
+    document.getElementById('captured-image').style.display = 'none';
+    document.getElementById('detection-results').style.display = 'none';
+    document.getElementById('use-results-btn').style.display = 'none';
+    
+    document.getElementById('capture-btn').style.display = 'block';
+    document.getElementById('analyze-btn').style.display = 'none';
+    document.getElementById('retake-btn').style.display = 'none';
+    
+    await startCamera();
+}
+
+function closeCameraAndReturn() {
+    stopCamera();
+    gameState.roundNumber--; // إلغاء الجولة
+    goToScreen('game-screen');
+}
+
+// ========== تحليل الصورة بـ Roboflow ==========
+async function analyzeImage() {
+    const canvas = document.getElementById('camera-canvas');
+    const imageBase64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+    
+    showLoading('جاري تحليل البطاقات...');
+    
+    try {
+        const response = await fetch(
+            `https://detect.roboflow.com/playing-cards-ow27d/4?api_key=${apiKey}`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: imageBase64
+            }
+        );
+        
+        if (!response.ok) {
+            throw new Error(`API Error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        hideLoading();
+        
+        if (data.predictions && data.predictions.length > 0) {
+            processDetections(data.predictions);
+        } else {
+            alert('لم يتم اكتشاف أي بطاقات. حاول التقاط صورة أوضح.');
+        }
+        
+    } catch (err) {
+        hideLoading();
+        console.error('API Error:', err);
+        alert('حدث خطأ أثناء التحليل. تأكد من صحة مفتاح API والاتصال بالإنترنت.');
+    }
+}
+
+function processDetections(predictions) {
+    // تصفية النتائج بالثقة
+    const minConfidence = 0.5;
+    const filtered = predictions.filter(p => p.confidence >= minConfidence);
+    
+    // تحليل البطاقات
+    const cards = {
+        diamonds: 0,
+        queens: [],
+        kingOfHearts: false,
+        allCards: []
+    };
+    
+    filtered.forEach(pred => {
+        const cardClass = pred.class.toUpperCase();
+        cards.allCards.push({
+            name: cardClass,
+            confidence: pred.confidence
+        });
+        
+        // عد الديناري
+        if (cardClass.endsWith('D') || cardClass.includes('DIAMOND')) {
+            cards.diamonds++;
+        }
+        
+        // اكتشاف البنات
+        if (cardClass.startsWith('Q')) {
+            if (cardClass.includes('S') || cardClass.includes('SPADE')) {
+                if (!cards.queens.includes('spade')) cards.queens.push('spade');
+            } else if (cardClass.includes('H') || cardClass.includes('HEART')) {
+                if (!cards.queens.includes('heart')) cards.queens.push('heart');
+            } else if (cardClass.includes('D') || cardClass.includes('DIAMOND')) {
+                if (!cards.queens.includes('diamond')) cards.queens.push('diamond');
+            } else if (cardClass.includes('C') || cardClass.includes('CLUB')) {
+                if (!cards.queens.includes('club')) cards.queens.push('club');
+            }
+        }
+        
+        // اكتشاف شيخ القبة (ملك القلب)
+        if (cardClass.startsWith('K') && (cardClass.includes('H') || cardClass.includes('HEART'))) {
+            cards.kingOfHearts = true;
+        }
+    });
+    
+    // حساب عدد الأكلات (تقريبي: كل 4 بطاقات = أكلة)
+    cards.tricks = Math.floor(filtered.length / 4);
+    
+    detectedResults = cards;
+    displayDetectionResults(cards);
+}
+
+function displayDetectionResults(cards) {
+    const container = document.getElementById('detected-cards-list');
+    container.innerHTML = '';
+    
+    // عرض كل البطاقات المكتشفة
+    cards.allCards.forEach(card => {
+        const item = document.createElement('div');
+        item.className = 'detected-card-item';
+        
+        // تحديد اللون حسب نوع البطاقة
+        if (card.name.includes('H')) item.classList.add('heart');
+        else if (card.name.includes('D')) item.classList.add('diamond');
+        else if (card.name.includes('S')) item.classList.add('spade');
+        else if (card.name.includes('C')) item.classList.add('club');
+        
+        item.innerHTML = `
+            ${card.name}
+            <span class="confidence">${Math.round(card.confidence * 100)}%</span>
+        `;
+        container.appendChild(item);
+    });
+    
+    // إضافة ملخص
+    const summary = document.createElement('div');
+    summary.style.cssText = 'width:100%; margin-top:10px; padding-top:10px; border-top:1px solid var(--bg-secondary); font-size:13px; color:var(--text-secondary);';
+    summary.innerHTML = `
+        <strong>الملخص:</strong><br>
+        الأكلات: ~${cards.tricks} | الديناري: ${cards.diamonds} | البنات: ${cards.queens.length}
+        ${cards.kingOfHearts ? ' | شيخ القبة ♥' : ''}
+    `;
+    container.appendChild(summary);
+    
+    document.getElementById('detection-results').style.display = 'block';
+    document.getElementById('use-results-btn').style.display = 'block';
+}
+
+function useDetectionResults() {
+    if (!detectedResults) return;
+    
+    // تطبيق النتائج على الجولة الحالية
+    gameState.currentRound.tricks = detectedResults.tricks;
+    gameState.currentRound.diamonds = Math.min(13, detectedResults.diamonds);
+    gameState.currentRound.queens = detectedResults.queens;
+    gameState.currentRound.hasKing = detectedResults.kingOfHearts;
+    
+    // الانتقال لشاشة العد للتعديل إذا لزم
+    updateCountingScreen();
+    
+    // تحديث الواجهة
+    document.getElementById('tricks-value').textContent = gameState.currentRound.tricks;
+    document.getElementById('diamonds-value').textContent = gameState.currentRound.diamonds;
+    
+    // تحديد البطاقات
+    document.querySelectorAll('#counting-screen .card-btn').forEach(btn => {
+        const card = btn.dataset.card;
+        if (card === 'king-heart' && gameState.currentRound.hasKing) {
+            btn.classList.add('selected');
+        } else if (card.startsWith('queen-')) {
+            const suit = card.replace('queen-', '');
+            if (gameState.currentRound.queens.includes(suit)) {
+                btn.classList.add('selected');
+            }
+        }
+    });
+    
+    goToScreen('counting-screen');
+}
+
+// ========== Loading Overlay ==========
+function showLoading(text = 'جاري التحميل...') {
+    let overlay = document.getElementById('loading-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'loading-overlay';
+        overlay.className = 'loading-overlay';
+        overlay.innerHTML = `
+            <div class="spinner"></div>
+            <div class="loading-text">${text}</div>
+        `;
+        document.body.appendChild(overlay);
+    } else {
+        overlay.querySelector('.loading-text').textContent = text;
+        overlay.style.display = 'flex';
+    }
+}
+
+function hideLoading() {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+    }
+}
