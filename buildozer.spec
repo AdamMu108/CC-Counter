@@ -45,7 +45,7 @@ android.ndk = 25b
 android.sdk = 31
 
 # الصلاحيات المطلوبة
-android.permissions = CAMERA, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE
+android.permissions = INTERNET, CAMERA, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE
 
 # الأنظمة المستهدفة
 android.archs = arm64-v8a, armeabi-v7a

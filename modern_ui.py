@@ -493,7 +493,17 @@ class WelcomeScreen(Screen):
         continue_btn.bind(on_press=self._continue_game)
         layout.add_widget(continue_btn)
         
-        layout.add_widget(Widget(size_hint_y=0.08))
+        # زر الإعدادات
+        settings_btn = ArabicButton(
+            text="⚙ إعدادات الكاميرا",
+            bg_color=COLORS['surface'],
+            height=dp(40),
+            font_size=dp(14)
+        )
+        settings_btn.bind(on_press=self._open_settings)
+        layout.add_widget(settings_btn)
+        
+        layout.add_widget(Widget(size_hint_y=0.05))
         
         self.add_widget(layout)
     
@@ -510,6 +520,9 @@ class WelcomeScreen(Screen):
     
     def _continue_game(self, *args):
         self.manager.current = 'game'
+    
+    def _open_settings(self, *args):
+        self.manager.current = 'settings'
 
 
 class GameScreen(Screen):
@@ -674,7 +687,7 @@ class GameScreen(Screen):
 
 
 class CameraScreen(Screen):
-    """شاشة الكاميرا للتعرف على البطاقات"""
+    """شاشة الكاميرا للتعرف على البطاقات باستخدام AI"""
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -814,10 +827,126 @@ class CameraScreen(Screen):
             ))
     
     def _capture(self, *args):
-        """التقاط وتحليل - للمحاكاة"""
-        # في الإصدار الحقيقي هنا يتم تحليل الصورة
-        # للمحاكاة نذهب لشاشة اختيار ما تم اكتشافه
-        self.manager.current = 'camera_result'
+        """التقاط وتحليل الصورة باستخدام AI API"""
+        from card_detector import CardDetector
+        
+        # عرض رسالة انتظار
+        self.detected_cards_row.clear_widgets()
+        self.detected_cards_row.add_widget(ArabicLabel(
+            text="جاري التحليل...",
+            font_size=dp(14),
+            color=COLORS['primary']
+        ))
+        
+        # جدولة التحليل
+        Clock.schedule_once(lambda dt: self._do_analysis(), 0.1)
+    
+    def _do_analysis(self):
+        """تنفيذ التحليل"""
+        from card_detector import CardDetector
+        import threading
+        
+        def analyze_in_thread():
+            try:
+                detector = CardDetector()
+                app = self.manager.app
+                
+                # الحصول على الصورة
+                image_data = None
+                
+                if self.camera_widget and hasattr(self.camera_widget, 'texture'):
+                    # التقاط من الكاميرا
+                    texture = self.camera_widget.texture
+                    if texture:
+                        pixels = texture.pixels
+                        size = texture.size
+                        
+                        # تحويل لـ PIL Image
+                        from PIL import Image
+                        from io import BytesIO
+                        
+                        # texture.pixels هو bytearray بتنسيق RGBA
+                        img = Image.frombytes('RGBA', (int(size[0]), int(size[1])), bytes(pixels))
+                        img = img.convert('RGB')
+                        
+                        # حفظ كـ bytes
+                        buffer = BytesIO()
+                        img.save(buffer, format='JPEG', quality=85)
+                        image_data = buffer.getvalue()
+                
+                if image_data:
+                    # إرسال للـ API
+                    cards = detector.detect_from_bytes(image_data, confidence_threshold=0.4)
+                    
+                    # تحديث النتائج في الـ UI thread
+                    Clock.schedule_once(lambda dt: self._show_results(cards, detector.last_error), 0)
+                else:
+                    Clock.schedule_once(lambda dt: self._show_error("لم يتم التقاط صورة"), 0)
+                    
+            except Exception as e:
+                Clock.schedule_once(lambda dt: self._show_error(str(e)), 0)
+        
+        # تشغيل في thread منفصل
+        thread = threading.Thread(target=analyze_in_thread)
+        thread.daemon = True
+        thread.start()
+    
+    def _show_results(self, cards, error=None):
+        """عرض نتائج التحليل"""
+        self.detected_cards_row.clear_widgets()
+        
+        if error:
+            self._show_error(error)
+            return
+        
+        if not cards:
+            self.detected_cards_row.add_widget(ArabicLabel(
+                text="لم يتم اكتشاف بطاقات",
+                font_size=dp(12),
+                color=COLORS['warning']
+            ))
+            return
+        
+        # تخزين البطاقات المكتشفة
+        queens = []
+        has_king = False
+        diamonds = 0
+        
+        for card in cards:
+            if card.is_queen():
+                suit_map = {'S': 'spade', 'H': 'heart', 'D': 'diamond', 'C': 'club'}
+                queens.append(suit_map.get(card.suit, 'spade'))
+            if card.is_king_of_hearts():
+                has_king = True
+            if card.is_diamond():
+                diamonds += 1
+        
+        self.detected_cards = {
+            'queens': queens,
+            'king': has_king,
+            'diamonds': diamonds,
+            'all_cards': cards
+        }
+        
+        self._update_detected_display()
+        
+        # عرض ملخص
+        summary = f"تم اكتشاف {len(cards)} بطاقة"
+        self.detected_cards_row.add_widget(ArabicLabel(
+            text=summary,
+            font_size=dp(12),
+            color=COLORS['success'],
+            size_hint_x=0.3
+        ))
+    
+    def _show_error(self, error):
+        """عرض رسالة خطأ"""
+        self.detected_cards_row.clear_widgets()
+        self.detected_cards_row.add_widget(ArabicLabel(
+            text=f"خطأ: {error}",
+            font_size=dp(11),
+            color=COLORS['danger']
+        ))
     
     def _go_manual(self, *args):
         self.manager.current = 'counting'
@@ -1500,3 +1629,219 @@ class HistoryScreen(Screen):
         expected = app.round_number * POINTS['round_total']
         actual = app.team1_total + app.team2_total
         self.total_lbl.set_text(f"المجموع الكلي: {app.team1_total} + {app.team2_total} = {actual}")
+
+
+class SettingsScreen(Screen):
+    """شاشة الإعدادات - إعداد API Key"""
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.name = 'settings'
+        Clock.schedule_once(lambda dt: self._build(), 0)
+    
+    def _build(self):
+        with self.canvas.before:
+            Color(*COLORS['background'])
+            self.bg = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._update_bg, size=self._update_bg)
+        
+        layout = BoxLayout(orientation='vertical', padding=dp(15), spacing=dp(15))
+        
+        # العنوان
+        layout.add_widget(ArabicLabel(
+            text="إعدادات التطبيق",
+            font_size=dp(22),
+            size_hint_y=None,
+            height=dp(50)
+        ))
+        
+        # قسم API
+        api_box = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(200), spacing=dp(10))
+        
+        with api_box.canvas.before:
+            Color(*COLORS['card'])
+            api_box._bg = RoundedRectangle(pos=api_box.pos, size=api_box.size, radius=[dp(15)])
+        api_box.bind(pos=lambda *a: setattr(api_box._bg, 'pos', api_box.pos),
+                     size=lambda *a: setattr(api_box._bg, 'size', api_box.size))
+        
+        api_box.add_widget(ArabicLabel(
+            text="إعدادات التعرف بالكاميرا",
+            font_size=dp(16),
+            color=COLORS['primary'],
+            size_hint_y=None,
+            height=dp(35)
+        ))
+        
+        api_box.add_widget(ArabicLabel(
+            text="مفتاح Roboflow API",
+            font_size=dp(13),
+            color=COLORS['text_secondary'],
+            size_hint_y=None,
+            height=dp(25),
+            halign='right'
+        ))
+        
+        self.api_input = ArabicTextInput(
+            hint_text="أدخل مفتاح API هنا",
+            multiline=False,
+            size_hint_y=None,
+            height=dp(45),
+            halign='left',
+            padding=[dp(10), dp(10)]
+        )
+        api_box.add_widget(self.api_input)
+        
+        # زر حفظ API
+        save_api_btn = ArabicButton(
+            text="حفظ المفتاح",
+            bg_color=COLORS['success'],
+            size_hint_y=None,
+            height=dp(45)
+        )
+        save_api_btn.bind(on_press=self._save_api_key)
+        api_box.add_widget(save_api_btn)
+        
+        layout.add_widget(api_box)
+        
+        # تعليمات
+        help_box = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(180), spacing=dp(5))
+        
+        with help_box.canvas.before:
+            Color(*COLORS['surface'])
+            help_box._bg = RoundedRectangle(pos=help_box.pos, size=help_box.size, radius=[dp(15)])
+        help_box.bind(pos=lambda *a: setattr(help_box._bg, 'pos', help_box.pos),
+                      size=lambda *a: setattr(help_box._bg, 'size', help_box.size))
+        
+        help_box.add_widget(ArabicLabel(
+            text="كيف تحصل على مفتاح API؟",
+            font_size=dp(14),
+            color=COLORS['primary'],
+            size_hint_y=None,
+            height=dp(30)
+        ))
+        
+        steps = [
+            "1. اذهب إلى roboflow.com",
+            "2. أنشئ حساب مجاني",
+            "3. اذهب إلى Settings",
+            "4. اختر API Keys",
+            "5. انسخ المفتاح وألصقه هنا"
+        ]
+        
+        for step in steps:
+            help_box.add_widget(ArabicLabel(
+                text=step,
+                font_size=dp(11),
+                color=COLORS['text_secondary'],
+                size_hint_y=None,
+                height=dp(22),
+                halign='right'
+            ))
+        
+        layout.add_widget(help_box)
+        
+        # حالة API
+        self.status_lbl = ArabicLabel(
+            text="",
+            font_size=dp(13),
+            size_hint_y=None,
+            height=dp(35)
+        )
+        layout.add_widget(self.status_lbl)
+        
+        # مساحة فارغة
+        layout.add_widget(Widget())
+        
+        # زر رجوع
+        back_btn = ArabicButton(
+            text="رجوع",
+            bg_color=COLORS['primary'],
+            size_hint_y=None,
+            height=dp(50)
+        )
+        back_btn.bind(on_press=self._go_back)
+        layout.add_widget(back_btn)
+        
+        self.add_widget(layout)
+    
+    def _update_bg(self, *args):
+        self.bg.pos = self.pos
+        self.bg.size = self.size
+    
+    def on_enter(self):
+        """عند دخول الشاشة"""
+        # تحميل المفتاح المحفوظ
+        app = self.manager.app
+        if hasattr(app, 'api_key') and app.api_key:
+            self.api_input.text = app.api_key
+            self._check_api_status()
+        else:
+            self._load_saved_key()
+    
+    def _load_saved_key(self):
+        """تحميل المفتاح من الملف"""
+        try:
+            import os
+            config_path = os.path.join(os.path.dirname(__file__), 'api_config.txt')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    key = f.read().strip()
+                    if key:
+                        self.api_input.text = key
+                        self.manager.app.api_key = key
+                        self._check_api_status()
+        except:
+            pass
+    
+    def _save_api_key(self, *args):
+        """حفظ مفتاح API"""
+        key = self.api_input.text.strip()
+        
+        if not key:
+            self.status_lbl.set_text("الرجاء إدخال مفتاح API")
+            self.status_lbl.color = COLORS['danger']
+            return
+        
+        # حفظ في التطبيق
+        self.manager.app.api_key = key
+        
+        # حفظ في ملف
+        try:
+            import os
+            config_path = os.path.join(os.path.dirname(__file__), 'api_config.txt')
+            with open(config_path, 'w') as f:
+                f.write(key)
+        except:
+            pass
+        
+        # تحديث card_detector
+        try:
+            import card_detector
+            card_detector.ROBOFLOW_API_KEY = key
+        except:
+            pass
+        
+        self.status_lbl.set_text("تم حفظ المفتاح بنجاح ✓")
+        self.status_lbl.color = COLORS['success']
+        
+        # اختبار المفتاح
+        Clock.schedule_once(lambda dt: self._check_api_status(), 0.5)
+    
+    def _check_api_status(self):
+        """التحقق من حالة API"""
+        try:
+            from card_detector import CardDetector
+            detector = CardDetector(self.api_input.text.strip())
+            
+            if detector.is_ready:
+                self.status_lbl.set_text("المفتاح جاهز للاستخدام ✓")
+                self.status_lbl.color = COLORS['success']
+            else:
+                self.status_lbl.set_text("المفتاح غير صالح")
+                self.status_lbl.color = COLORS['danger']
+        except Exception as e:
+            self.status_lbl.set_text(f"خطأ: {str(e)}")
+            self.status_lbl.color = COLORS['danger']
+    
+    def _go_back(self, *args):
+        self.manager.current = 'welcome'

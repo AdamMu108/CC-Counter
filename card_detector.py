@@ -1,502 +1,382 @@
 """
-كاشف البطاقات باستخدام معالجة الصور
-Card Detector using Image Processing (OpenCV)
+كاشف البطاقات باستخدام Roboflow API
+Card Detector using Roboflow API (Online)
+
+النموذج: Playing Cards Detection (52 cards)
+الدقة: ~95%
+المجاني: 1000 صورة/شهر
 """
 
-import cv2
-import numpy as np
+import os
+import json
+import base64
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
+from urllib import request, error
+from io import BytesIO
+
+# محاولة استيراد PIL
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    Image = None
 
 
-class CardSuit(Enum):
-    """أنواع الورق"""
-    SPADE = "بستوني"      # ♠
-    DIAMOND = "ديناري"    # ♦
-    HEART = "قبة"         # ♥
-    CLUB = "اسباتي"       # ♣
+# ===== إعدادات API =====
+
+# Roboflow API - نموذج البطاقات المجاني
+ROBOFLOW_API_KEY = "YOUR_API_KEY_HERE"  # ← ضع مفتاحك هنا
+ROBOFLOW_MODEL = "playing-cards-ow27d"
+ROBOFLOW_VERSION = "4"
+ROBOFLOW_API_URL = f"https://detect.roboflow.com/{ROBOFLOW_MODEL}/{ROBOFLOW_VERSION}"
 
 
-class CardRank(Enum):
-    """رتب الورق"""
-    ACE = "A"
-    TWO = "2"
-    THREE = "3"
-    FOUR = "4"
-    FIVE = "5"
-    SIX = "6"
-    SEVEN = "7"
-    EIGHT = "8"
-    NINE = "9"
-    TEN = "10"
-    JACK = "J"
-    QUEEN = "Q"
-    KING = "K"
+# ===== الثوابت =====
 
+SUITS = {
+    'S': ('بستوني', '♠'),
+    'H': ('قبة', '♥'),
+    'D': ('ديناري', '♦'),
+    'C': ('اسباتي', '♣'),
+}
+
+RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+
+RANK_NAMES = {
+    'A': 'آص', '2': '2', '3': '3', '4': '4', '5': '5',
+    '6': '6', '7': '7', '8': '8', '9': '9', '10': '10',
+    'J': 'ولد', 'Q': 'بنت', 'K': 'شيخ'
+}
+
+# تحويل أسماء الكلاسات من Roboflow لصيغتنا
+# Roboflow يستخدم: "10C", "10D", "10H", "10S", "2C", etc.
+CLASS_MAPPING = {}
+for suit_code in ['C', 'D', 'H', 'S']:
+    for rank in RANKS:
+        # Roboflow format: "10C", "2D", "QH", etc.
+        rf_class = f"{rank}{suit_code}"
+        CLASS_MAPPING[rf_class] = (rank, suit_code)
+
+
+# ===== البطاقة المكتشفة =====
 
 @dataclass
 class DetectedCard:
     """بطاقة مكتشفة"""
-    rank: Optional[CardRank]
-    suit: Optional[CardSuit]
-    confidence: float
-    bounding_box: Tuple[int, int, int, int]  # x, y, width, height
-    contour: np.ndarray = None
+    card_code: str
+    rank: str
+    suit: str
+    confidence: float = 1.0
+    box: Tuple[float, float, float, float] = None  # x, y, w, h
+    
+    @property
+    def suit_name(self) -> str:
+        return SUITS.get(self.suit, ('', ''))[0]
+    
+    @property
+    def suit_symbol(self) -> str:
+        return SUITS.get(self.suit, ('', ''))[1]
+    
+    @property
+    def rank_name(self) -> str:
+        return RANK_NAMES.get(self.rank, self.rank)
+    
+    @property
+    def display_name(self) -> str:
+        return f"{self.rank_name} {self.suit_name}"
+    
+    @property
+    def symbol(self) -> str:
+        return f"{self.rank}{self.suit_symbol}"
+    
+    def is_diamond(self) -> bool:
+        return self.suit == 'D'
+    
+    def is_queen(self) -> bool:
+        return self.rank == 'Q'
+    
+    def is_king_of_hearts(self) -> bool:
+        return self.rank == 'K' and self.suit == 'H'
+    
+    @classmethod
+    def from_code(cls, code: str, confidence: float = 1.0, box=None) -> Optional['DetectedCard']:
+        """إنشاء بطاقة من الكود"""
+        if len(code) < 2:
+            return None
+        
+        suit = code[-1].upper()
+        rank = code[:-1].upper()
+        
+        if suit not in SUITS or rank not in RANK_NAMES:
+            return None
+        
+        return cls(
+            card_code=f"{rank}{suit}",
+            rank=rank,
+            suit=suit,
+            confidence=confidence,
+            box=box
+        )
 
+
+# ===== كاشف البطاقات =====
 
 class CardDetector:
     """
-    كاشف البطاقات باستخدام معالجة الصور
-    
-    يستخدم OpenCV لاكتشاف البطاقات وتحديد نوعها ورتبتها
+    كاشف البطاقات باستخدام Roboflow API
     """
     
-    # ألوان الأنواع للتعرف
-    RED_SUITS = [CardSuit.HEART, CardSuit.DIAMOND]
-    BLACK_SUITS = [CardSuit.SPADE, CardSuit.CLUB]
-    
-    # أبعاد البطاقة القياسية (نسبة العرض للطول)
-    CARD_ASPECT_RATIO = 0.7  # تقريباً
-    
-    # حدود المساحة للبطاقة
-    MIN_CARD_AREA = 5000
-    MAX_CARD_AREA = 500000
-    
-    def __init__(self):
-        self.detected_cards: List[DetectedCard] = []
-        self.processed_image = None
-        
-        # قوالب الرموز (يمكن تحميلها من ملفات)
-        self.rank_templates = {}
-        self.suit_templates = {}
-        
-    def preprocess_image(self, image: np.ndarray) -> np.ndarray:
+    def __init__(self, api_key: str = None):
         """
-        معالجة مسبقة للصورة
+        تهيئة الكاشف
         
         Args:
-            image: الصورة الأصلية (BGR)
-        
-        Returns:
-            صورة معالجة (تدرج رمادي مع تحسين التباين)
+            api_key: مفتاح Roboflow API (اختياري)
         """
-        # تحويل لتدرج رمادي
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        self.api_key = api_key or ROBOFLOW_API_KEY
+        self.is_ready = self.api_key and self.api_key != "YOUR_API_KEY_HERE"
+        self.last_error = None
         
-        # تحسين التباين
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-        
-        # تنعيم خفيف لإزالة الضوضاء
-        blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-        
-        return blurred
+    def set_api_key(self, api_key: str):
+        """تعيين مفتاح API"""
+        self.api_key = api_key
+        self.is_ready = bool(api_key)
     
-    def find_card_contours(self, image: np.ndarray) -> List[np.ndarray]:
-        """
-        إيجاد حدود البطاقات في الصورة
-        
-        Args:
-            image: الصورة المعالجة (تدرج رمادي)
-        
-        Returns:
-            قائمة بحدود البطاقات
-        """
-        # تحويل ثنائي (Thresholding)
-        _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        
-        # إيجاد الحدود
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        card_contours = []
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            
-            # تصفية حسب المساحة
-            if self.MIN_CARD_AREA < area < self.MAX_CARD_AREA:
-                # تقريب الحدود لمضلع
-                peri = cv2.arcLength(contour, True)
-                approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-                
-                # البطاقة يجب أن تكون مستطيلة (4 زوايا تقريباً)
-                if len(approx) == 4:
-                    card_contours.append(contour)
-        
-        return card_contours
-    
-    def extract_card_image(self, image: np.ndarray, contour: np.ndarray) -> np.ndarray:
-        """
-        استخراج صورة البطاقة وتصحيح المنظور
-        
-        Args:
-            image: الصورة الأصلية
-            contour: حدود البطاقة
-        
-        Returns:
-            صورة البطاقة المصححة
-        """
-        # إيجاد الزوايا الأربع
-        peri = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-        
-        if len(approx) != 4:
-            # إذا لم نجد 4 زوايا، نستخدم المستطيل المحيط
-            rect = cv2.minAreaRect(contour)
-            box = cv2.boxPoints(rect)
-            approx = np.int32(box)
-        
-        # ترتيب النقاط (أعلى-يسار، أعلى-يمين، أسفل-يمين، أسفل-يسار)
-        pts = approx.reshape(4, 2)
-        rect = self._order_points(pts)
-        
-        # حساب أبعاد البطاقة الجديدة
-        (tl, tr, br, bl) = rect
-        width_a = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
-        width_b = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
-        max_width = max(int(width_a), int(width_b))
-        
-        height_a = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
-        height_b = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
-        max_height = max(int(height_a), int(height_b))
-        
-        # تصحيح المنظور
-        dst = np.array([
-            [0, 0],
-            [max_width - 1, 0],
-            [max_width - 1, max_height - 1],
-            [0, max_height - 1]
-        ], dtype="float32")
-        
-        matrix = cv2.getPerspectiveTransform(rect, dst)
-        warped = cv2.warpPerspective(image, matrix, (max_width, max_height))
-        
-        return warped
-    
-    def _order_points(self, pts: np.ndarray) -> np.ndarray:
-        """ترتيب نقاط المستطيل"""
-        rect = np.zeros((4, 2), dtype="float32")
-        
-        s = pts.sum(axis=1)
-        rect[0] = pts[np.argmin(s)]  # أعلى-يسار
-        rect[2] = pts[np.argmax(s)]  # أسفل-يمين
-        
-        diff = np.diff(pts, axis=1)
-        rect[1] = pts[np.argmin(diff)]  # أعلى-يمين
-        rect[3] = pts[np.argmax(diff)]  # أسفل-يسار
-        
-        return rect
-    
-    def detect_suit_color(self, card_image: np.ndarray) -> str:
-        """
-        تحديد لون البطاقة (أحمر أو أسود)
-        
-        Args:
-            card_image: صورة البطاقة
-        
-        Returns:
-            "red" أو "black"
-        """
-        # تحويل لـ HSV
-        hsv = cv2.cvtColor(card_image, cv2.COLOR_BGR2HSV)
-        
-        # نطاق الأحمر في HSV
-        lower_red1 = np.array([0, 100, 100])
-        upper_red1 = np.array([10, 255, 255])
-        lower_red2 = np.array([160, 100, 100])
-        upper_red2 = np.array([180, 255, 255])
-        
-        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        red_mask = mask1 + mask2
-        
-        red_pixels = cv2.countNonZero(red_mask)
-        total_pixels = card_image.shape[0] * card_image.shape[1]
-        
-        # إذا كان أكثر من 5% أحمر، فالبطاقة حمراء
-        if red_pixels / total_pixels > 0.05:
-            return "red"
-        return "black"
-    
-    def identify_rank(self, corner_image: np.ndarray) -> Optional[CardRank]:
-        """
-        تحديد رتبة البطاقة من صورة الزاوية
-        
-        Args:
-            corner_image: صورة زاوية البطاقة
-        
-        Returns:
-            رتبة البطاقة أو None
-        """
-        # هنا يمكن استخدام Template Matching أو ML
-        # للتبسيط، سنستخدم OCR بسيط أو مقارنة القوالب
-        
-        # تحويل لثنائي
-        gray = cv2.cvtColor(corner_image, cv2.COLOR_BGR2GRAY) if len(corner_image.shape) == 3 else corner_image
-        _, binary = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY_INV)
-        
-        # إيجاد الحدود في الزاوية
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if not contours:
+    def _image_to_base64(self, image) -> str:
+        """تحويل صورة PIL لـ base64"""
+        if not PIL_AVAILABLE:
             return None
         
-        # أكبر حدود هي الرقم/الحرف
-        largest = max(contours, key=cv2.contourArea)
-        x, y, w, h = cv2.boundingRect(largest)
+        # إذا كانت الصورة مسار
+        if isinstance(image, str):
+            with open(image, 'rb') as f:
+                return base64.b64encode(f.read()).decode('utf-8')
         
-        # نسبة العرض للطول تساعد في التعرف
-        aspect_ratio = w / h if h > 0 else 0
+        # إذا كانت صورة PIL
+        buffer = BytesIO()
         
-        # تحليل بسيط (يمكن تحسينه بـ ML)
-        # هذا مجرد مثال - في التطبيق الحقيقي تحتاج نموذج مدرب
+        # تحويل لـ RGB إذا لزم
+        if image.mode == 'RGBA':
+            image = image.convert('RGB')
         
-        return None  # placeholder
+        image.save(buffer, format='JPEG', quality=85)
+        return base64.b64encode(buffer.getvalue()).decode('utf-8')
     
-    def identify_suit(self, corner_image: np.ndarray, color: str) -> Optional[CardSuit]:
+    def _resize_image(self, image, max_size: int = 640):
+        """تصغير الصورة للتحسين"""
+        if not PIL_AVAILABLE:
+            return image
+        
+        if isinstance(image, str):
+            image = Image.open(image)
+        
+        # حساب الحجم الجديد
+        w, h = image.size
+        if max(w, h) > max_size:
+            ratio = max_size / max(w, h)
+            new_size = (int(w * ratio), int(h * ratio))
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+        
+        return image
+    
+    def detect_cards(self, image, confidence_threshold: float = 0.4) -> List[DetectedCard]:
         """
-        تحديد نوع البطاقة من صورة الزاوية واللون
+        اكتشاف البطاقات في الصورة
         
         Args:
-            corner_image: صورة زاوية البطاقة (الجزء السفلي من الزاوية)
-            color: لون البطاقة ("red" أو "black")
-        
+            image: صورة PIL أو مسار الصورة أو bytes
+            confidence_threshold: الحد الأدنى للثقة (0.0-1.0)
+            
         Returns:
-            نوع البطاقة أو None
+            قائمة البطاقات المكتشفة
         """
-        # تحويل لثنائي
-        gray = cv2.cvtColor(corner_image, cv2.COLOR_BGR2GRAY) if len(corner_image.shape) == 3 else corner_image
-        _, binary = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY_INV)
+        self.last_error = None
         
-        # إيجاد الحدود
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not self.is_ready:
+            self.last_error = "API key غير موجود"
+            return []
         
-        if not contours:
-            return None
-        
-        # أكبر حدود هي رمز النوع
-        largest = max(contours, key=cv2.contourArea)
-        
-        # تحليل شكل الرمز
-        # ♠ بستوني - أسود، شكل مدبب
-        # ♦ ديناري - أحمر، شكل ماسي
-        # ♥ قبة - أحمر، شكل قلب
-        # ♣ اسباتي - أسود، شكل ثلاثي الفصوص
-        
-        # تحليل بسيط حسب اللون وخصائص الشكل
-        area = cv2.contourArea(largest)
-        perimeter = cv2.arcLength(largest, True)
-        circularity = 4 * np.pi * area / (perimeter * perimeter) if perimeter > 0 else 0
-        
-        if color == "red":
-            # التمييز بين القبة والديناري
-            if circularity > 0.7:  # الماسة أكثر دائرية
-                return CardSuit.DIAMOND
+        try:
+            # تصغير الصورة
+            if PIL_AVAILABLE and not isinstance(image, bytes):
+                image = self._resize_image(image)
+            
+            # تحويل لـ base64
+            if isinstance(image, bytes):
+                img_base64 = base64.b64encode(image).decode('utf-8')
             else:
-                return CardSuit.HEART
-        else:
-            # التمييز بين البستوني والاسباتي
-            hull = cv2.convexHull(largest)
-            hull_area = cv2.contourArea(hull)
-            solidity = area / hull_area if hull_area > 0 else 0
+                img_base64 = self._image_to_base64(image)
             
-            if solidity > 0.8:  # البستوني أكثر صلابة
-                return CardSuit.SPADE
-            else:
-                return CardSuit.CLUB
-    
-    def detect_cards(self, image: np.ndarray) -> List[DetectedCard]:
-        """
-        اكتشاف جميع البطاقات في الصورة
-        
-        Args:
-            image: الصورة الأصلية (BGR)
-        
-        Returns:
-            قائمة بالبطاقات المكتشفة
-        """
-        self.detected_cards = []
-        
-        # معالجة مسبقة
-        processed = self.preprocess_image(image)
-        self.processed_image = processed
-        
-        # إيجاد حدود البطاقات
-        contours = self.find_card_contours(processed)
-        
-        for contour in contours:
-            # استخراج صورة البطاقة
-            card_image = self.extract_card_image(image, contour)
+            if not img_base64:
+                self.last_error = "فشل تحويل الصورة"
+                return []
             
-            if card_image.size == 0:
-                continue
+            # إرسال الطلب
+            url = f"{ROBOFLOW_API_URL}?api_key={self.api_key}&confidence={int(confidence_threshold * 100)}"
             
-            # تحديد اللون
-            color = self.detect_suit_color(card_image)
-            
-            # استخراج منطقة الزاوية (حيث الرقم والرمز)
-            h, w = card_image.shape[:2]
-            corner = card_image[0:int(h*0.25), 0:int(w*0.2)]
-            
-            # تحديد الرتبة والنوع
-            rank = self.identify_rank(corner)
-            suit = self.identify_suit(corner, color)
-            
-            # إيجاد المستطيل المحيط
-            x, y, w, h = cv2.boundingRect(contour)
-            
-            detected = DetectedCard(
-                rank=rank,
-                suit=suit,
-                confidence=0.5,  # placeholder
-                bounding_box=(x, y, w, h),
-                contour=contour
+            req = request.Request(
+                url,
+                data=img_base64.encode('utf-8'),
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
             )
             
-            self.detected_cards.append(detected)
-        
-        return self.detected_cards
+            with request.urlopen(req, timeout=30) as response:
+                result = json.loads(response.read().decode('utf-8'))
+            
+            # تحليل النتائج
+            return self._parse_response(result, confidence_threshold)
+            
+        except error.HTTPError as e:
+            self.last_error = f"خطأ HTTP: {e.code}"
+            if e.code == 401:
+                self.last_error = "مفتاح API غير صالح"
+            elif e.code == 429:
+                self.last_error = "تجاوزت الحد المسموح (1000 صورة/شهر)"
+            return []
+            
+        except error.URLError as e:
+            self.last_error = f"خطأ اتصال: {e.reason}"
+            return []
+            
+        except Exception as e:
+            self.last_error = f"خطأ: {str(e)}"
+            return []
     
-    def draw_detections(self, image: np.ndarray) -> np.ndarray:
-        """
-        رسم البطاقات المكتشفة على الصورة
+    def _parse_response(self, response: dict, min_confidence: float) -> List[DetectedCard]:
+        """تحليل استجابة API"""
+        cards = []
         
-        Args:
-            image: الصورة الأصلية
+        predictions = response.get('predictions', [])
         
-        Returns:
-            صورة مع رسومات البطاقات المكتشفة
-        """
-        result = image.copy()
-        
-        for card in self.detected_cards:
-            x, y, w, h = card.bounding_box
+        for pred in predictions:
+            class_name = pred.get('class', '')
+            confidence = pred.get('confidence', 0)
             
-            # رسم المستطيل
-            color = (0, 255, 0)  # أخضر
-            cv2.rectangle(result, (x, y), (x + w, y + h), color, 2)
+            if confidence < min_confidence:
+                continue
             
-            # كتابة المعلومات
-            text = ""
-            if card.rank:
-                text += card.rank.value
-            if card.suit:
-                text += " " + card.suit.value
+            # استخراج الإحداثيات
+            x = pred.get('x', 0)
+            y = pred.get('y', 0)
+            w = pred.get('width', 0)
+            h = pred.get('height', 0)
+            box = (x - w/2, y - h/2, w, h)  # تحويل من center إلى corner
             
-            if text:
-                cv2.putText(result, text, (x, y - 10), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            # إنشاء البطاقة
+            card = DetectedCard.from_code(class_name, confidence, box)
+            if card:
+                cards.append(card)
         
-        return result
+        # ترتيب حسب الثقة
+        cards.sort(key=lambda c: c.confidence, reverse=True)
+        
+        # إزالة التكرارات (نفس البطاقة مكتشفة أكثر من مرة)
+        seen = set()
+        unique_cards = []
+        for card in cards:
+            if card.card_code not in seen:
+                seen.add(card.card_code)
+                unique_cards.append(card)
+        
+        return unique_cards
     
-    def get_detection_summary(self) -> Dict:
-        """
-        الحصول على ملخص الاكتشاف
-        
-        Returns:
-            قاموس بملخص البطاقات المكتشفة
-        """
-        summary = {
-            "total_cards": len(self.detected_cards),
-            "diamonds": [],
-            "queens": [],
-            "king_heart": None,
-            "diamond_count": 0
-        }
-        
-        for card in self.detected_cards:
-            # عد الديناري
-            if card.suit == CardSuit.DIAMOND:
-                summary["diamond_count"] += 1
-                summary["diamonds"].append(card)
-            
-            # البنات
-            if card.rank == CardRank.QUEEN:
-                summary["queens"].append({
-                    "suit": card.suit,
-                    "is_doubled": False
-                })
-            
-            # شيخ القبة
-            if card.rank == CardRank.KING and card.suit == CardSuit.HEART:
-                summary["king_heart"] = True
-        
-        return summary
-
-
-class ManualCardInput:
-    """
-    إدخال البطاقات يدوياً كبديل عن معالجة الصور
-    للاستخدام عندما لا تعمل معالجة الصور بشكل جيد
-    """
+    def detect_from_file(self, image_path: str, confidence_threshold: float = 0.4) -> List[DetectedCard]:
+        """اكتشاف من ملف صورة"""
+        return self.detect_cards(image_path, confidence_threshold)
     
-    @staticmethod
-    def create_detection_summary(
-        total_cards: int,
-        diamond_count: int,
-        queens: List[str],  # قائمة بأنواع البنات ["قبة", "ديناري", ...]
-        has_king_heart: bool
-    ) -> Dict:
-        """
-        إنشاء ملخص من إدخال يدوي
-        
-        Args:
-            total_cards: عدد الأوراق الكلي
-            diamond_count: عدد أوراق الديناري
-            queens: قائمة بأنواع البنات
-            has_king_heart: هل يوجد شيخ القبة
-        
-        Returns:
-            ملخص بنفس تنسيق CardDetector.get_detection_summary()
-        """
-        suit_map = {
-            "بستوني": CardSuit.SPADE,
-            "ديناري": CardSuit.DIAMOND,
-            "قبة": CardSuit.HEART,
-            "اسباتي": CardSuit.CLUB
+    def detect_from_bytes(self, image_bytes: bytes, confidence_threshold: float = 0.4) -> List[DetectedCard]:
+        """اكتشاف من bytes"""
+        return self.detect_cards(image_bytes, confidence_threshold)
+    
+    def count_for_game(self, cards: List[DetectedCard]) -> Dict[str, int]:
+        """حساب الإحصائيات للعبة"""
+        return {
+            'total': len(cards),
+            'diamonds': sum(1 for c in cards if c.is_diamond()),
+            'queens': sum(1 for c in cards if c.is_queen()),
+            'king_of_hearts': sum(1 for c in cards if c.is_king_of_hearts()),
         }
+    
+    def create_cards_manual(self, diamonds: int = 0, queens: int = 0, 
+                           king_of_hearts: bool = False) -> List[DetectedCard]:
+        """إنشاء بطاقات يدوياً (للاختبار)"""
+        cards = []
         
-        summary = {
-            "total_cards": total_cards,
-            "diamond_count": diamond_count,
-            "queens": [],
-            "king_heart": has_king_heart
-        }
+        for i in range(min(diamonds, 13)):
+            rank = RANKS[i]
+            cards.append(DetectedCard(
+                card_code=f"{rank}D",
+                rank=rank,
+                suit='D'
+            ))
         
-        for queen_suit in queens:
-            suit = suit_map.get(queen_suit)
-            if suit:
-                summary["queens"].append({
-                    "suit": suit,
-                    "is_doubled": False
-                })
+        other_suits = ['S', 'H', 'C']
+        for i in range(min(queens, 3)):
+            suit = other_suits[i]
+            cards.append(DetectedCard(
+                card_code=f"Q{suit}",
+                rank='Q',
+                suit=suit
+            ))
         
-        return summary
+        if king_of_hearts:
+            cards.append(DetectedCard(
+                card_code='KH',
+                rank='K',
+                suit='H'
+            ))
+        
+        return cards
 
 
-# مثال على الاستخدام
+# ===== دوال مساعدة =====
+
+def get_detector(api_key: str = None) -> CardDetector:
+    """الحصول على كاشف البطاقات"""
+    return CardDetector(api_key)
+
+
+def calculate_score(tricks: int = 0, diamonds: int = 0, queens: int = 0,
+                   king_of_hearts: bool = False, doubled: bool = False) -> int:
+    """حساب النقاط"""
+    score = 0
+    score -= tricks * 15
+    score -= diamonds * 10
+    queen_points = -50 if doubled else -25
+    score += queens * queen_points
+    if king_of_hearts:
+        score += -150 if doubled else -75
+    return score
+
+
+# ===== الاختبار =====
+
 if __name__ == "__main__":
-    # اختبار الكاشف
+    print("=" * 50)
+    print("   كاشف البطاقات - Roboflow API")
+    print("=" * 50)
+    
     detector = CardDetector()
     
-    # محاكاة صورة (في التطبيق الحقيقي تأتي من الكاميرا)
-    # test_image = cv2.imread("test_cards.jpg")
-    # if test_image is not None:
-    #     cards = detector.detect_cards(test_image)
-    #     print(f"تم اكتشاف {len(cards)} بطاقة")
-    #     
-    #     result = detector.draw_detections(test_image)
-    #     cv2.imshow("Detected Cards", result)
-    #     cv2.waitKey(0)
-    #     cv2.destroyAllWindows()
+    print(f"\nحالة API: {'جاهز ✓' if detector.is_ready else 'يحتاج مفتاح API ✗'}")
     
-    # اختبار الإدخال اليدوي
-    manual = ManualCardInput()
-    summary = manual.create_detection_summary(
-        total_cards=20,
-        diamond_count=3,
-        queens=["قبة", "ديناري", "بستوني"],
-        has_king_heart=True
-    )
-    print("ملخص الإدخال اليدوي:")
-    print(summary)
+    if not detector.is_ready:
+        print("\n" + "-" * 50)
+        print("للحصول على مفتاح API مجاني:")
+        print("1. اذهب إلى: https://roboflow.com")
+        print("2. أنشئ حساب مجاني")
+        print("3. اذهب إلى Settings → API Keys")
+        print("4. انسخ المفتاح وضعه في الكود")
+        print("-" * 50)
+    
+    # اختبار يدوي
+    print("\n--- اختبار يدوي ---")
+    cards = detector.create_cards_manual(diamonds=3, queens=2, king_of_hearts=True)
+    
+    for card in cards:
+        print(f"  {card.symbol} - {card.display_name}")
+    
+    stats = detector.count_for_game(cards)
+    print(f"\nالإحصائيات: ديناري={stats['diamonds']}, بنات={stats['queens']}, شيخ القبة={stats['king_of_hearts']}")

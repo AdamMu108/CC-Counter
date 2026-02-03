@@ -28,7 +28,8 @@ from modern_ui import (
     CountingFromCameraScreen,
     CountingScreen,
     DoublingScreen,
-    HistoryScreen
+    HistoryScreen,
+    SettingsScreen
 )
 
 from app_config import POINTS
@@ -49,6 +50,10 @@ class CCCounterApp(App):
         self.round_number = 0
         self.history = []
         self.current_round_data = {}
+        
+        # إعدادات API
+        self.api_key = ""
+        self._load_api_key()
     
     def build(self):
         """بناء واجهة التطبيق"""
@@ -70,6 +75,7 @@ class CCCounterApp(App):
         self.sm.add_widget(CountingScreen())
         self.sm.add_widget(DoublingScreen())
         self.sm.add_widget(HistoryScreen())
+        self.sm.add_widget(SettingsScreen())
         
         return self.sm
     
@@ -84,6 +90,20 @@ class CCCounterApp(App):
     def get_expected_total(self):
         """المجموع المتوقع"""
         return self.round_number * POINTS['round_total']
+    
+    def _load_api_key(self):
+        """تحميل مفتاح API من الملف"""
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'api_config.txt')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    self.api_key = f.read().strip()
+                    if self.api_key:
+                        # تحديث card_detector
+                        import card_detector
+                        card_detector.ROBOFLOW_API_KEY = self.api_key
+        except Exception as e:
+            print(f"Error loading API key: {e}")
     
     def on_start(self):
         print("=" * 50)
